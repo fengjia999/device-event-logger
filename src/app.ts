@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env, Vars } from "./types.ts";
 import { corsMiddleware } from "./middleware/cors.ts";
-import { authMiddleware, mcpAuthMiddleware } from "./middleware/auth.ts";
+import { authMiddleware } from "./middleware/auth.ts";
 import { createSql } from "./lib/db.ts";
 import { parseOffsetEnv } from "./lib/timezone.ts";
 import { events } from "./routes/events.ts";
@@ -65,12 +65,7 @@ export function createApp(options?: AppOptions) {
     return group;
   })());
 
-  app.route("/mcp", (() => {
-    const group = new Hono<{ Bindings: Env; Variables: Vars }>();
-    group.use("*", mcpAuthMiddleware);
-    group.route("/", mcp);
-    return group;
-  })());
+  app.route("/mcp", mcp);
 
   return app;
 }

@@ -20,7 +20,6 @@
 4. 在项目设置中添加环境变量：
    - `DATABASE_URL` — PostgreSQL 连接字符串
    - `API_KEY` — 认证密钥
-   - `MCP_API_KEY` — MCP 查询密钥（可选，默认使用 `API_KEY`）
    - `TZ_OFFSET` — `480`（可选）
 5. 部署即可，推送代码会自动重新部署
 
@@ -49,7 +48,6 @@ TZ_OFFSET = "480"
 ```bash
 wrangler secret put DATABASE_URL
 wrangler secret put API_KEY
-wrangler secret put MCP_API_KEY
 ```
 
 4. 部署：
@@ -70,7 +68,6 @@ npm install
 # 设置环境变量
 export DATABASE_URL="postgres://user:pass@host:5432/dbname"
 export API_KEY="your-secret-key"
-export MCP_API_KEY="your-mcp-secret-key"
 export TZ_OFFSET="480"
 
 # 启动（需要 Node.js >= 22）
@@ -83,17 +80,12 @@ npm start
 |------|------|------|
 | `DATABASE_URL` | PostgreSQL 连接字符串 | 是 |
 | `API_KEY` | `/events` 端点的认证密钥 | 是 |
-| `MCP_API_KEY` | `/mcp` 端点的认证密钥；未设置时使用 `API_KEY` | 否 |
 | `TZ_OFFSET` | 与 UTC 的时区偏移（分钟，默认 `480`） | 否 |
 | `PORT` | 服务端口（默认 `8000`，仅 Node/Deno） | 否 |
 
 ## MCP
 
-MCP 地址为 `https://你的域名/mcp`，请求必须携带：
-
-```text
-Authorization: Bearer <MCP_API_KEY 或 API_KEY>
-```
+MCP 地址为 `https://你的域名/mcp`。
 
 可用工具：
 
