@@ -1,7 +1,12 @@
 import type { Context } from "hono";
 import type postgres from "postgres";
 import type { Env, Vars, JsonRpcId, JsonRpcMessage } from "../types.ts";
-import { queryEvents, parseEventQueryFromToolArgs, buildEventSummaryText } from "./queries.ts";
+import {
+  queryEvents,
+  queryCurrentDeviceState,
+  parseEventQueryFromToolArgs,
+  buildEventSummaryText,
+} from "./queries.ts";
 import { withRetry } from "./db.ts";
 
 const DEFAULT_MCP_PROTOCOL_VERSION = "2025-03-26";
@@ -113,6 +118,54 @@ const LIST_EVENT_TYPES_TOOL = {
   },
 };
 
+const GET_CURRENT_DEVICE_STATE_TOOL = {
+  name: "get_current_device_state",
+  title: "Get Current Device State",
+  description:
+    "Get the latest reported value for every device event type within a recent time window. Use this for a compact snapshot instead of querying the full event history.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      hours: {
+        type: "number",
+        description: "Look back N hours for the latest values. Default 24, maximum 720.",
+        minimum: 0.001,
+        maximum: 720,
+      },
+    },
+  },
+  outputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      generatedAt: { type: "string" },
+      lookbackHours: { type: "number" },
+      states: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            type: { type: "string" },
+            value: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+            },
+            ts: {
+              anyOf: [{ type: "string" }, { type: "null" }],
+            },
+            ageMinutes: {
+              anyOf: [{ type: "integer" }, { type: "null" }],
+            },
+          },
+          required: ["type", "value", "ts", "ageMinutes"],
+        },
+      },
+    },
+    required: ["generatedAt", "lookbackHours", "states"],
+  },
+};
+
 function jsonRpcError(id: JsonRpcId, code: number, message: string, data?: unknown) {
   return {
     jsonrpc: "2.0" as const,
@@ -178,6 +231,57 @@ async function callListEventTypesTool(sql: postgres.Sql) {
   }
 }
 
+async function callGetCurrentDeviceStateTool(
+  args: Record<string, unknown>,
+  sql: postgres.Sql,
+  offsetMinutes: number,
+) {
+  const rawHours = args.hours == null ? 24 : Number(args.hours);
+  if (!Number.isFinite(rawHours) || rawHours <= 0 || rawHours > 720) {
+    return {
+      content: [{ type: "text", text: "Invalid 'hours': expected a number greater than 0 and at most 720." }],
+      isError: true,
+    };
+  }
+
+  try {
+    const events = await queryCurrentDeviceState(rawHours, sql, offsetMinutes);
+    const now = Date.now();
+    const states = events.map((event) => {
+      const timestamp = event.ts ? new Date(event.ts).getTime() : Number.NaN;
+      return {
+        type: event.type,
+        value: event.value,
+        ts: event.ts,
+        ageMinutes: Number.isFinite(timestamp)
+          ? Math.max(0, Math.floor((now - timestamp) / 60_000))
+          : null,
+      };
+    });
+    const result = {
+      generatedAt: new Date(now).toISOString(),
+      lookbackHours: rawHours,
+      states,
+    };
+    const text = states.length
+      ? states.map((state) =>
+        `- ${state.type}: ${state.value ?? "(no value)"} [${state.ageMinutes ?? "?"}m ago]`
+      ).join("\n")
+      : `No device state was reported in the last ${rawHours} hours.`;
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: result,
+      isError: false,
+    };
+  } catch (error) {
+    console.error("MCP get_current_device_state failed:", error);
+    return {
+      content: [{ type: "text", text: "Database error while reading current device state." }],
+      isError: true,
+    };
+  }
+}
+
 async function handleMcpRequest(message: JsonRpcMessage, sql: postgres.Sql, offsetMinutes: number) {
   const id = (message.id ?? null) as JsonRpcId;
   const method = typeof message.method === "string" ? message.method : "";
@@ -200,7 +304,7 @@ async function handleMcpRequest(message: JsonRpcMessage, sql: postgres.Sql, offs
         capabilities: { tools: { listChanged: false } },
         serverInfo: MCP_SERVER_INFO,
         instructions:
-          "This server provides read-only access to user device event records. Use list_event_types to discover available event types, then use query_events to query records by time range, type, and value.",
+          "This server provides read-only access to user device event records. Use get_current_device_state for a compact current snapshot. Use list_event_types and query_events only when historical detail is needed.",
       });
     }
     case "notifications/initialized":
@@ -209,19 +313,22 @@ async function handleMcpRequest(message: JsonRpcMessage, sql: postgres.Sql, offs
       return jsonRpcResult(id, {});
     case "tools/list":
       return jsonRpcResult(id, {
-        tools: [QUERY_EVENTS_TOOL, LIST_EVENT_TYPES_TOOL],
+        tools: [GET_CURRENT_DEVICE_STATE_TOOL, QUERY_EVENTS_TOOL, LIST_EVENT_TYPES_TOOL],
       });
     case "tools/call": {
       const name = typeof params.name === "string" ? params.name : "";
+      const args = (params.arguments && typeof params.arguments === "object")
+        ? params.arguments as Record<string, unknown>
+        : {};
+      if (name === GET_CURRENT_DEVICE_STATE_TOOL.name) {
+        return jsonRpcResult(id, await callGetCurrentDeviceStateTool(args, sql, offsetMinutes));
+      }
       if (name === LIST_EVENT_TYPES_TOOL.name) {
         return jsonRpcResult(id, await callListEventTypesTool(sql));
       }
       if (name !== QUERY_EVENTS_TOOL.name) {
         return jsonRpcError(id, -32601, `Unknown tool: ${name || "(empty)"}`);
       }
-      const args = (params.arguments && typeof params.arguments === "object")
-        ? params.arguments as Record<string, unknown>
-        : {};
       return jsonRpcResult(id, await callQueryEventsTool(args, sql, offsetMinutes));
     }
     default:

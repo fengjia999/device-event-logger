@@ -2,6 +2,7 @@ import type postgres from "postgres";
 
 export type Env = {
   API_KEY: string;
+  MCP_API_KEY?: string;
   DATABASE_URL: string;
   TZ_OFFSET?: string;
 };

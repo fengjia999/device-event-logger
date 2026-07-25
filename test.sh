@@ -92,6 +92,7 @@ echo ""
 echo "[ MCP /mcp ]"
 
 r=$(curl -s -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $KEY" \
   -H "Accept: application/json, text/event-stream" \
   -H "MCP-Protocol-Version: 2025-03-26" \
   -X POST "$BASE/mcp" \
@@ -100,13 +101,16 @@ check "MCP initialize 返回 protocolVersion" '"protocolVersion":"2025-03-26"' "
 check "MCP initialize 返回 tools capability" '"tools"' "$r"
 
 r=$(curl -s -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $KEY" \
   -H "Accept: application/json, text/event-stream" \
   -H "MCP-Protocol-Version: 2025-03-26" \
   -X POST "$BASE/mcp" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
 check "MCP tools/list 返回 query_events" '"name":"query_events"' "$r"
+check "MCP tools/list 返回 get_current_device_state" '"name":"get_current_device_state"' "$r"
 
 r=$(curl -s -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $KEY" \
   -H "Accept: application/json, text/event-stream" \
   -H "MCP-Protocol-Version: 2025-03-26" \
   -X POST "$BASE/mcp" \
@@ -114,7 +118,16 @@ r=$(curl -s -H "Content-Type: application/json" \
 check "MCP tools/call 返回 structuredContent" '"structuredContent"' "$r"
 check "MCP tools/call 返回文本内容" '"content"' "$r"
 
-r=$(curl -s -o /dev/null -w "%{http_code}" -H "Accept: text/event-stream" \
+r=$(curl -s -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $KEY" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "MCP-Protocol-Version: 2025-03-26" \
+  -X POST "$BASE/mcp" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_current_device_state","arguments":{"hours":24}}}')
+check "当前状态返回 states" '"states"' "$r"
+check "当前状态包含 app.open" '"type":"app.open"' "$r"
+
+r=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $KEY" -H "Accept: text/event-stream" \
   "$BASE/mcp")
 check "MCP GET 在无 SSE 时返回405" '405' "$r"
 
@@ -128,6 +141,15 @@ check "无 Authorization 返回401" '"error"' "$r"
 
 r=$(curl -s -H "Authorization: Bearer wrongkey" "$BASE/events?hours=24")
 check "错误 API Key 返回401" '"error"' "$r"
+
+r=$(curl -s -H "Content-Type: application/json" -X POST "$BASE/mcp" \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{}}')
+check "MCP 无 Authorization 返回401" '"error"' "$r"
+
+r=$(curl -s -H "Authorization: Bearer wrongkey" -H "Content-Type: application/json" \
+  -X POST "$BASE/mcp" \
+  -d '{"jsonrpc":"2.0","id":6,"method":"tools/list","params":{}}')
+check "MCP 错误 API Key 返回401" '"error"' "$r"
 
 echo ""
 

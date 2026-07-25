@@ -137,6 +137,32 @@ export async function queryEvents(
   };
 }
 
+export async function queryCurrentDeviceState(
+  hours: number,
+  sql: postgres.Sql,
+  offsetMinutes: number,
+): Promise<EventRecord[]> {
+  const since = new Date(Date.now() - hours * 3600_000).toISOString();
+  const rows = await withRetry(() =>
+    sql.unsafe(
+      `SELECT DISTINCT ON (type) id, type, value, ts
+       FROM events
+       WHERE ts >= $1
+       ORDER BY type, ts DESC, id DESC`,
+      [since],
+    )
+  );
+
+  return rows
+    .map((r: Record<string, unknown>) => ({
+      id: Number(r.id),
+      type: String(r.type ?? ""),
+      value: r.value == null ? null : String(r.value),
+      ts: formatWithOffset(r.ts, offsetMinutes),
+    }))
+    .sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+}
+
 export function buildEventSummaryText(events: EventRecord[], total: number): string {
   if (!events.length) {
     return `Found 0 events. Total matches: ${total}.`;
